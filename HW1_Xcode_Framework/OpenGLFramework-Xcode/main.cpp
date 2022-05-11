@@ -92,9 +92,11 @@ typedef struct
 	GLuint m_texture;
 } Shape;
 Shape quad;
-Shape m_shpae;
+Shape m_shape;
 vector<Shape> m_shape_list;
 int cur_idx = 0; // represent which model should be rendered now
+// [TODO] wireframe mode implementation
+bool wireframe = false;
 
 
 static GLvoid Normalize(GLfloat v[3])
@@ -121,11 +123,12 @@ Matrix4 translate(Vector3 vec)
 {
 	Matrix4 mat;
 
-	/*
 	mat = Matrix4(
-		...
+		1, 0, 0, vec.x,
+        0, 1, 0, vec.y,
+        0, 0, 1, vec.z,
+        0, 0, 0, 1
 	);
-	*/
 
 	return mat;
 }
@@ -135,11 +138,13 @@ Matrix4 scaling(Vector3 vec)
 {
 	Matrix4 mat;
 
-	/*
 	mat = Matrix4(
-		...
+		vec.x, 0, 0, 0,
+        0, vec.y, 0, 0,
+        0, 0, vec.z, 0,
+        0, 0, 0, 1
+                  
 	);
-	*/
 
 	return mat;
 }
@@ -150,11 +155,12 @@ Matrix4 rotateX(GLfloat val)
 {
 	Matrix4 mat;
 
-	/*
 	mat = Matrix4(
-		...
+		1, 0, 0, 0,
+        0, cos(val), -sin(val), 0,
+        0, sin(val), cos(val), 0,
+        0, 0, 0, 1
 	);
-	*/
 
 	return mat;
 }
@@ -164,11 +170,12 @@ Matrix4 rotateY(GLfloat val)
 {
 	Matrix4 mat;
 
-	/*
 	mat = Matrix4(
-		...
+		cos(val), 0, sin(val), 0,
+        0, 1, 0, 0,
+        -sin(val), 0, cos(val), 0,
+        0, 0, 0, 1
 	);
-	*/
 
 	return mat;
 }
@@ -178,11 +185,12 @@ Matrix4 rotateZ(GLfloat val)
 {
 	Matrix4 mat;
 
-	/*
 	mat = Matrix4(
-		...
+		cos(val), -sin(val), 0, 0,
+        sin(val), cos(val), 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1
 	);
-	*/
 
 	return mat;
 }
@@ -195,21 +203,71 @@ Matrix4 rotate(Vector3 vec)
 // [TODO] compute viewing matrix accroding to the setting of main_camera
 void setViewingMatrix()
 {
-	// view_matrix[...] = ...
+    // p74
+    Vector3 p1p2 = main_camera.center - main_camera.position;
+    Vector3 p1p3 = main_camera.up_vector;
+    
+    Vector3 Rz = -1 * p1p2;
+    Rz = Rz.normalize();
+    
+    Vector3 Rx = p1p2.cross(p1p3);
+    Rx = Rx.normalize();
+    
+    Vector3 Ry = Rz.cross(Rx);
+    
+    Matrix4 R = Matrix4(
+        Rx.x, Rx.y, Rx.z, 0,
+        Ry.x, Ry.y, Ry.z, 0,
+        Rz.x, Rz.y, Rz.z, 0,
+        0, 0, 0, 1
+    );
+    
+    Matrix4 T = Matrix4(
+        1, 0, 0, -main_camera.position.x,
+        0, 1, 0, -main_camera.position.y,
+        0, 0, 1, -main_camera.position.z,
+        0, 0, 0, 1
+    );
+    
+    // view_matrix[...] = ...
+    view_matrix = R * T;
 }
 
 // [TODO] compute orthogonal projection matrix
 void setOrthogonal()
 {
 	cur_proj_mode = Orthogonal;
+    
+    // p127
+    GLfloat r_l = proj.right - proj.left;
+    GLfloat t_b = proj.top - proj.bottom;
+    GLfloat f_n = proj.farClip - proj.nearClip;
+    
 	// project_matrix [...] = ...
+    project_matrix = Matrix4(
+        2/r_l, 0, 0, -(proj.right + proj.left)/r_l,
+        0, 2/t_b, 0, -(proj.top + proj.bottom)/t_b,
+        0, 0, -2/f_n, -(proj.farClip + proj.nearClip)/f_n,
+        0, 0, 0, 1
+    );
 }
 
 // [TODO] compute persepective projection matrix
 void setPerspective()
 {
 	cur_proj_mode = Perspective;
+    
+    // p132
+    GLfloat f = -1.0 / tan(proj.fovy/2);    // ????
+    GLfloat n_f = proj.nearClip - proj.farClip;
+    
 	// project_matrix [...] = ...
+    project_matrix = Matrix4(
+        f/proj.aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, (proj.farClip + proj.nearClip)/n_f, 2*proj.farClip*proj.nearClip/n_f,
+        0, 0, -1, 0
+    );
 }
 
 
@@ -221,6 +279,8 @@ void ChangeSize(GLFWwindow* window, int width, int height)
 {
 	glViewport(0, 0, width, height);
 	// [TODO] change your aspect ratio
+    proj.aspect = (float)width / (float)height;
+    setPerspective();
 }
 
 void drawPlane()
@@ -241,6 +301,39 @@ void drawPlane()
 
 
 	// [TODO] draw the plane with above vertices and color
+    glGenVertexArrays(1, &quad.vao);
+    glBindVertexArray(quad.vao);
+
+    glGenBuffers(1, &quad.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, quad.vbo);
+    glBufferData(GL_ARRAY_BUFFER, 18*sizeof(GL_FLOAT), vertices, GL_STATIC_DRAW);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, 0);
+
+    glGenBuffers(1, &quad.p_color);
+    glBindBuffer(GL_ARRAY_BUFFER, quad.p_color);
+    glBufferData(GL_ARRAY_BUFFER, 18*sizeof(GL_FLOAT), colors, GL_STATIC_DRAW);
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 0, 0);
+    
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    
+    Matrix4 MVP;
+    GLfloat mvp[16];
+
+    // [TODO] multiply all the matrix
+    MVP = project_matrix * view_matrix;
+    // [TODO] row-major ---> column-major
+    mvp[0] = MVP[0];    mvp[4] = MVP[1];    mvp[8] = MVP[2];    mvp[12] = MVP[3];
+    mvp[1] = MVP[4];    mvp[5] = MVP[5];    mvp[9] = MVP[6];    mvp[13] = MVP[7];
+    mvp[2] = MVP[8];    mvp[6] = MVP[9];    mvp[10] = MVP[10];  mvp[14] = MVP[11];
+    mvp[3] = MVP[12];   mvp[7] = MVP[13];   mvp[11] = MVP[14];  mvp[15] = MVP[15];
+    
+    // [TODO] wireframe mode implementation
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);  // fill plane with color
+
+    glUniformMatrix4fv(iLocMVP, 1, GL_FALSE, mvp);
+    glBindVertexArray(quad.vao);
+    glDrawArrays(GL_TRIANGLES, 0, 6);
 }
 
 // Render function for display rendering
@@ -250,46 +343,178 @@ void RenderScene(void) {
 
 	Matrix4 T, R, S;
 	// [TODO] update translation, rotation and scaling
+    T = translate(models[cur_idx].position);
+    R = rotate(models[cur_idx].rotation);
+    S = scaling(models[cur_idx].scale);
 
 	Matrix4 MVP;
 	GLfloat mvp[16];
 
 	// [TODO] multiply all the matrix
+    MVP = project_matrix * view_matrix * T * R * S;
 	// [TODO] row-major ---> column-major
+    mvp[0] = MVP[0];    mvp[4] = MVP[1];    mvp[8] = MVP[2];    mvp[12] = MVP[3];
+    mvp[1] = MVP[4];    mvp[5] = MVP[5];    mvp[9] = MVP[6];    mvp[13] = MVP[7];
+    mvp[2] = MVP[8];    mvp[6] = MVP[9];    mvp[10] = MVP[10];  mvp[14] = MVP[11];
+    mvp[3] = MVP[12];   mvp[7] = MVP[13];   mvp[11] = MVP[14];  mvp[15] = MVP[15];
 
-	mvp[0] = 1;  mvp[4] = 0;   mvp[8] = 0;    mvp[12] = 0;
-	mvp[1] = 0;  mvp[5] = 1;   mvp[9] = 0;    mvp[13] = 0;
-	mvp[2] = 0;  mvp[6] = 0;   mvp[10] = 1;   mvp[14] = 0;
-	mvp[3] = 0; mvp[7] = 0;  mvp[11] = 0;   mvp[15] = 1;
-
+    // [TODO] wireframe mode implementation
+    glPolygonMode(GL_FRONT_AND_BACK, wireframe? GL_LINE: GL_FILL);
+    
 	// use uniform to send mvp to vertex shader
 	glUniformMatrix4fv(iLocMVP, 1, GL_FALSE, mvp);
 	glBindVertexArray(m_shape_list[cur_idx].vao);
 	glDrawArrays(GL_TRIANGLES, 0, m_shape_list[cur_idx].vertex_count);
 	drawPlane();
-
 }
 
 
 void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods)
 {
 	// [TODO] Call back function for keyboard
+    if (key == GLFW_KEY_W && action == GLFW_PRESS) {
+        // switch between solid and wireframe mode
+        wireframe = !wireframe;
+    }
+    if (key == GLFW_KEY_X && action == GLFW_PRESS) {
+        // switch the model
+        cur_idx = (cur_idx + 1) % 5;
+        printf("%d\n", cur_idx);
+    }
+    if (key == GLFW_KEY_Z && action == GLFW_PRESS) {
+        // switch the model
+        cur_idx = (cur_idx + 5 - 1) % 5;
+        printf("%d\n", cur_idx);
+    }
+    if (key == GLFW_KEY_O && action == GLFW_PRESS) {
+        // switch to Orthogonal projection
+        setOrthogonal();
+    }
+    if (key == GLFW_KEY_P && action == GLFW_PRESS) {
+        // switch to NDC Perspective projection
+        setPerspective();
+    }
+    if (key == GLFW_KEY_T && action == GLFW_PRESS) {
+        // switch to translation mode
+        cur_trans_mode = GeoTranslation;
+    }
+    if (key == GLFW_KEY_S && action == GLFW_PRESS) {
+        // switch to scale mode
+        cur_trans_mode = GeoScaling;
+    }
+    if (key == GLFW_KEY_R && action == GLFW_PRESS) {
+        // switch to rotation mode
+        cur_trans_mode = GeoRotation;
+    }
+    if (key == GLFW_KEY_E && action == GLFW_PRESS) {
+        // switch to translate eye position mode
+        cur_trans_mode = ViewEye;
+    }
+    if (key == GLFW_KEY_C && action == GLFW_PRESS) {
+        // switch to translate viewing center position mode
+        cur_trans_mode = ViewCenter;
+    }
+    if (key == GLFW_KEY_U && action == GLFW_PRESS) {
+        // switch to translate camera up vector position mode
+        cur_trans_mode = ViewUp;
+    }
+    if (key == GLFW_KEY_I && action == GLFW_PRESS) {
+        // print information
+        cout <<"Translation Matrix" << endl << translate(models[cur_idx].position) << endl;
+        cout <<"Rotation Matrix" << endl << rotate(models[cur_idx].rotation) << endl;
+        cout <<"Scaling Matrix" << endl << scaling(models[cur_idx].scale) << endl;
+        cout <<"Viewing Matrix" << endl << view_matrix << endl;
+        cout <<"Projection Matrix" << endl << project_matrix << endl;
+    }
 }
 
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 {
 	// [TODO] scroll up positive, otherwise it would be negtive
+    // cout << xoffset << " " << yoffset << endl;
+    if(cur_trans_mode == GeoTranslation) {
+        models[cur_idx].position.z += yoffset/20;
+    }
+    if(cur_trans_mode == GeoScaling) {
+        models[cur_idx].scale.z += yoffset/30;
+    }
+    if(cur_trans_mode == GeoRotation) {
+        models[cur_idx].rotation.z += yoffset/20;
+    }
+    if(cur_trans_mode == ViewEye) {
+        main_camera.position.z += yoffset/20;
+        setViewingMatrix();
+    }
+    if(cur_trans_mode == ViewCenter) {
+        main_camera.center.z += yoffset/20;
+        setViewingMatrix();
+    }
+    if(cur_trans_mode == ViewUp) {
+        main_camera.up_vector.z += yoffset/20;
+        setViewingMatrix();
+    }
 }
 
 void mouse_button_callback(GLFWwindow* window, int button, int action, int mods)
 {
 	// [TODO] mouse press callback function
-		
+    if (button == GLFW_MOUSE_BUTTON_LEFT) {
+        if (action == GLFW_PRESS) {
+            mouse_pressed = true;
+        }
+        else {
+            mouse_pressed = false;
+        }
+    }
 }
 
 static void cursor_pos_callback(GLFWwindow* window, double xpos, double ypos)
 {
 	// [TODO] cursor position callback function
+    // cout << xpos << " " << ypos << endl;
+    if (mouse_pressed) {
+        if(cur_trans_mode == GeoTranslation) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                models[cur_idx].position.x += (xpos-starting_press_x)/200;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                models[cur_idx].position.y -= (ypos-starting_press_y)/200;
+        }
+        if(cur_trans_mode == GeoScaling) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                models[cur_idx].scale.x += (xpos-starting_press_x)/300;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                models[cur_idx].scale.y += (ypos-starting_press_y)/300;
+        }
+        if(cur_trans_mode == GeoRotation) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                models[cur_idx].rotation.y += (xpos-starting_press_x)/200;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                models[cur_idx].rotation.x += (ypos-starting_press_y)/200;
+        }
+        if(cur_trans_mode == ViewEye) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                main_camera.position.x += (xpos-starting_press_x)/200;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                main_camera.position.y += (ypos-starting_press_y)/200;
+            setViewingMatrix();
+        }
+        if(cur_trans_mode == ViewCenter) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                main_camera.center.x -= (xpos-starting_press_x)/300;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                main_camera.center.y += (ypos-starting_press_y)/300;
+            setViewingMatrix();
+        }
+        if(cur_trans_mode == ViewUp) {
+            if (xpos-starting_press_x < 100 && xpos-starting_press_x > -100)
+                main_camera.up_vector.x += (xpos-starting_press_x)/50;
+            if (ypos-starting_press_y < 100 && ypos-starting_press_y > -100)
+                main_camera.up_vector.y += (ypos-starting_press_y)/50;
+            setViewingMatrix();
+        }
+        starting_press_x = xpos;
+        starting_press_y = ypos;
+    }
 }
 
 void setShaders()
@@ -564,7 +789,9 @@ void setupRC()
 	glClearColor(0.2, 0.2, 0.2, 1.0);
 	vector<string> model_list{ "../ColorModels/bunny5KC.obj", "../ColorModels/dragon10KC.obj", "../ColorModels/lucy25KC.obj", "../ColorModels/teapot4KC.obj", "../ColorModels/dolphinC.obj"};
 	// [TODO] Load five model at here
-	LoadModels(model_list[cur_idx]);
+    for (int i = 0; i < 5; i++) {
+        LoadModels(model_list[i]);
+    }
 }
 
 void glPrintContextInfo(bool printExtension)
