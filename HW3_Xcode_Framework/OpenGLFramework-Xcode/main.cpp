@@ -23,8 +23,8 @@
 using namespace std;
 
 // Default window size
-const int WINDOW_WIDTH = 800;
-const int WINDOW_HEIGHT = 600;
+const int WINDOW_WIDTH = 1600;
+const int WINDOW_HEIGHT = 1200;
 // current window size
 int screenWidth = WINDOW_WIDTH, screenHeight = WINDOW_HEIGHT;
 
@@ -40,6 +40,8 @@ enum TransMode
 	ViewCenter = 3,
 	ViewEye = 4,
 	ViewUp = 5,
+    LightEdit = 6,
+    ShininessEdit = 7,
 };
 
 
@@ -131,11 +133,61 @@ vector<string> model_list{ "../TextureModels/Fushigidane.obj", "../TextureModels
 
 GLuint program;
 
+// add lighting variables
+int cur_light_mode = 0; // 0:Directional / 1:Point / 2:Spot
+float shininess = 64;
+// add texture variables
+bool Magnification = false;
+bool Minification = false;
+float x_shift[7] = {0.0, 0.0, 0.0, 0.0, 0.5, 0.5, 0.5};
+float y_shift[7] = {0.0, 0.75, 0.5, 0.25, 0.0, 0.75, 0.5};
+
+struct light_setting
+{
+    Vector3 position;
+    Vector3 ambient;
+    Vector3 diffuse;
+    Vector3 specular;
+    Vector3 spotDirection;
+    float spotExponent;
+    float spotCutoff;
+    float constantAttenuation;
+    float linearAttenuation;
+    float quadraticAttenuation;
+};
+light_setting light[3];
 
 // uniforms location
 GLuint iLocP;
 GLuint iLocV;
 GLuint iLocM;
+
+GLuint iLoc_mode;   // Per-vertex / Per-pixel
+GLuint iLoc_cur_light_mode;
+GLuint iLoc_Ka;
+GLuint iLoc_Kd;
+GLuint iLoc_Ks;
+GLuint iLoc_view;
+GLuint iLoc_shininess;
+
+struct iLoc_light_setting
+{
+    GLuint position;
+    GLuint ambient;
+    GLuint diffuse;
+    GLuint specular;
+    GLuint spotDirection;
+    GLuint spotExponent;
+    GLuint spotCutoff;
+    GLuint constantAttenuation;
+    GLuint linearAttenuation;
+    GLuint quadraticAttenuation;
+};
+iLoc_light_setting iLoc_light;
+
+GLuint iLoc_texture_info;
+GLuint iLoc_x_shift;
+GLuint iLoc_y_shift;
 
 static GLvoid Normalize(GLfloat v[3])
 {
@@ -343,13 +395,45 @@ void RenderScene(int per_vertex_or_per_pixel) {
 	glUniformMatrix4fv(iLocM, 1, GL_FALSE, model_matrix.getTranspose());
 	glUniformMatrix4fv(iLocV, 1, GL_FALSE, view_matrix.getTranspose());
 	glUniformMatrix4fv(iLocP, 1, GL_FALSE, project_matrix.getTranspose());
-
+    
+    // setup light
+    glUniform1f(iLoc_shininess, shininess);
+    glUniform1i(iLoc_cur_light_mode, cur_light_mode);
+    
+    glUniform3fv(iLoc_light.position, 1, (GLfloat*)&light[cur_light_mode].position);
+    glUniform3fv(iLoc_light.diffuse, 1, (GLfloat*)&light[cur_light_mode].diffuse);
+    glUniform3fv(iLoc_light.ambient, 1, (GLfloat*)&light[cur_light_mode].ambient);
+    glUniform3fv(iLoc_light.specular, 1, (GLfloat*)&light[cur_light_mode].specular);
+    glUniform3fv(iLoc_light.spotDirection, 1, (GLfloat*)&light[cur_light_mode].spotDirection);
+    glUniform1f(iLoc_light.spotExponent, light[cur_light_mode].spotExponent);
+    glUniform1f(iLoc_light.spotCutoff, light[cur_light_mode].spotCutoff);
+    glUniform1f(iLoc_light.constantAttenuation, light[cur_light_mode].constantAttenuation);
+    glUniform1f(iLoc_light.linearAttenuation, light[cur_light_mode].linearAttenuation);
+    glUniform1f(iLoc_light.quadraticAttenuation, light[cur_light_mode].quadraticAttenuation);
+    
+    glUniform1i(iLoc_mode, per_vertex_or_per_pixel);
 	for (int i = 0; i < models[cur_idx].shapes.size(); i++) 
 	{
+        PhongMaterial mat = models[cur_idx].shapes[i].material;
+        glUniform3fv(iLoc_Ka, 1, (GLfloat*)&mat.Ka);
+        glUniform3fv(iLoc_Kd, 1, (GLfloat*)&mat.Kd);
+        glUniform3fv(iLoc_Ks, 1, (GLfloat*)&mat.Ks);
+        
 		glBindVertexArray(models[cur_idx].shapes[i].vao);
 
 		// [TODO] Bind texture and modify texture filtering & wrapping mode
 		// Hint: glActiveTexture, glBindTexture, glTexParameteri
+        glUniform1f(iLoc_x_shift, mat.isEye? x_shift[models[cur_idx].cur_eye_offset_idx]: 0.0);
+        glUniform1f(iLoc_y_shift, mat.isEye? y_shift[models[cur_idx].cur_eye_offset_idx]: 0.0);
+        
+        glActiveTexture(GL_TEXTURE0);
+        
+        glBindTexture(GL_TEXTURE_2D, models[cur_idx].shapes[i].material.diffuseTexture);
+        
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, Magnification? GL_LINEAR: GL_NEAREST);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, Minification? GL_LINEAR_MIPMAP_LINEAR: GL_NEAREST_MIPMAP_LINEAR);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);
+        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
 
 		glDrawArrays(GL_TRIANGLES, 0, models[cur_idx].shapes[i].vertex_count);
 	}
@@ -407,6 +491,27 @@ void KeyCallback(GLFWwindow* window, int key, int scancode, int action, int mods
 		case GLFW_KEY_I:
 			cout << endl;
 			break;
+        case GLFW_KEY_L:
+            cur_light_mode = (cur_light_mode+1) % 3;
+            break;
+        case GLFW_KEY_K:
+            cur_trans_mode = LightEdit;
+            break;
+        case GLFW_KEY_J:
+            cur_trans_mode = ShininessEdit;
+            break;
+        case GLFW_KEY_RIGHT:
+            models[cur_idx].cur_eye_offset_idx = (models[cur_idx].cur_eye_offset_idx + 1) % models[cur_idx].max_eye_offset;
+            break;
+        case GLFW_KEY_LEFT:
+            models[cur_idx].cur_eye_offset_idx = (models[cur_idx].cur_eye_offset_idx - 1 + models[cur_idx].max_eye_offset) % models[cur_idx].max_eye_offset;
+            break;
+        case GLFW_KEY_G:
+            Magnification = !Magnification;
+            break;
+        case GLFW_KEY_B:
+            Minification = !Minification;
+            break;
 		default:
 			break;
 		}
@@ -442,6 +547,22 @@ void scroll_callback(GLFWwindow* window, double xoffset, double yoffset)
 	case GeoRotation:
 		models[cur_idx].rotation.z += (acosf(-1.0f) / 180.0) * 5 * (float)yoffset;
 		break;
+    case LightEdit:
+        if(cur_light_mode != 2) {
+            // diffuse intensity for directional or point light
+            light[cur_light_mode].diffuse -= Vector3(0.5, 0.5, 0.5) * yoffset;  // clip????
+        }
+        else{
+            // cutoff angle for spot light
+            light[cur_light_mode].spotCutoff -= yoffset;
+            light[cur_light_mode].spotCutoff = max(min(light[cur_light_mode].spotCutoff, 90), 0);
+        }
+        break;
+    case ShininessEdit:
+        // Apply change on shininess when scroll the wheel
+        // The shininess is applied to all models
+        shininess = (shininess + yoffset > 0)? shininess+yoffset: 0;
+        break;
 	}
 }
 
@@ -501,6 +622,10 @@ static void cursor_pos_callback(GLFWwindow* window, double xpos, double ypos)
 				models[cur_idx].rotation.x += acosf(-1.0f) / 180.0*diff_y*(45.0 / 400.0);
 				models[cur_idx].rotation.y += acosf(-1.0f) / 180.0*diff_x*(45.0 / 400.0);
 				break;
+            case LightEdit:
+                light[cur_light_mode].position.x -= diff_x / 400;
+                light[cur_light_mode].position.y += diff_y / 400;
+                break;
 			}
 		}
 	}
@@ -718,7 +843,10 @@ GLuint LoadTextureImage(string image_path)
 
 		// [TODO] Bind the image to texture
 		// Hint: glGenTextures, glBindTexture, glTexImage2D, glGenerateMipmap
-
+        glGenTextures(1, &tex);
+        glBindTexture(GL_TEXTURE_2D, tex);
+        glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data);
+        glGenerateMipmap(GL_TEXTURE_2D);
 		// free the image from memory after binding to texture
 		stbi_image_free(data);
 		return tex;
@@ -846,6 +974,15 @@ void LoadTexturedModels(string model_path)
 		material.Ks = Vector3(materials[i].specular[0], materials[i].specular[1], materials[i].specular[2]);
 
 		material.diffuseTexture = LoadTextureImage(base_dir + string(materials[i].diffuse_texname));
+        
+        size_t found = string(materials[i].diffuse_texname).find("Eye");
+        if (found != string::npos) {
+            material.isEye = true;
+        }
+        else {
+            material.isEye = false;
+        }
+        
 		if (material.diffuseTexture == -1)
 		{
 			cout << "LoadTexturedModels: Fail to load model's material " << i << endl;
@@ -895,6 +1032,33 @@ void initParameter()
 
 	setViewingMatrix();
 	setPerspective();	//set default projection matrix as perspective matrix
+    
+    // direational
+    light[0].position = Vector3(1.0f, 1.0f, 1.0f);
+    light[0].ambient = Vector3(0.15f, 0.15f, 0.15f);
+    light[0].diffuse = Vector3(1.0f, 1.0f, 1.0f);
+    light[0].specular = Vector3(1.0f, 1.0f, 1.0f);
+
+    // point
+    light[1].position = Vector3(0.0f, 2.0f, 1.0f);
+    light[1].ambient = Vector3(0.15f, 0.15f, 0.15f);
+    light[1].diffuse = Vector3(1.0f, 1.0f, 1.0f);
+    light[1].specular = Vector3(1.0f, 1.0f, 1.0f);
+    light[1].constantAttenuation = 0.01f;
+    light[1].linearAttenuation = 0.8f;
+    light[1].quadraticAttenuation = 0.1f;
+
+    // spot
+    light[2].position = Vector3(0.0f, 0.0f, 2.0f);
+    light[2].ambient = Vector3(0.15f, 0.15f, 0.15f);
+    light[2].diffuse = Vector3(1.0f, 1.0f, 1.0f);
+    light[2].specular = Vector3(1.0f, 1.0f, 1.0f);
+    light[2].spotDirection = Vector3(0.0f, 0.0f, -1.0f);
+    light[2].spotExponent = 50.0;
+    light[2].spotCutoff = 30.0;
+    light[2].constantAttenuation = 0.05f;
+    light[2].linearAttenuation = 0.3f;
+    light[2].quadraticAttenuation = 0.6f;
 }
 
 void setUniformVariables()
@@ -902,8 +1066,33 @@ void setUniformVariables()
 	iLocP = glGetUniformLocation(program, "um4p");
 	iLocV = glGetUniformLocation(program, "um4v");
 	iLocM = glGetUniformLocation(program, "um4m");
+    
+    // general
+    iLoc_mode = glGetUniformLocation(program, "mode");
+    iLoc_shininess = glGetUniformLocation(program, "shininess");
+    iLoc_cur_light_mode = glGetUniformLocation(program, "cur_light_mode");
+
+    // Materials
+    iLoc_Ka = glGetUniformLocation(program, "material.Ka");
+    iLoc_Kd = glGetUniformLocation(program, "material.Kd");
+    iLoc_Ks = glGetUniformLocation(program, "material.Ks");
+
+    // Directional light
+    iLoc_light.position = glGetUniformLocation(program, "light.position");
+    iLoc_light.ambient = glGetUniformLocation(program, "light.La");
+    iLoc_light.diffuse = glGetUniformLocation(program, "light.Ld");
+    iLoc_light.specular = glGetUniformLocation(program, "light.Ls");
+    iLoc_light.spotDirection = glGetUniformLocation(program, "light.spotDirection");
+    iLoc_light.spotCutoff = glGetUniformLocation(program, "light.spotCutoff");
+    iLoc_light.spotExponent = glGetUniformLocation(program, "light.spotExponent");
+    iLoc_light.constantAttenuation = glGetUniformLocation(program, "light.constantAttenuation");
+    iLoc_light.linearAttenuation = glGetUniformLocation(program, "light.linearAttenuation");
+    iLoc_light.quadraticAttenuation = glGetUniformLocation(program, "light.quadraticAttenuation");
 
 	// [TODO] Get uniform location of texture
+    iLoc_texture_info = glGetUniformLocation(program, "texture_info");
+    iLoc_x_shift = glGetUniformLocation(program, "x_shift");
+    iLoc_y_shift = glGetUniformLocation(program, "y_shift");
 }
 
 void setupRC()
@@ -955,7 +1144,7 @@ int main(int argc, char **argv)
 
     
     // create window
-	GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH/2, WINDOW_HEIGHT/2, "Student ID HW3", NULL, NULL);
+	GLFWwindow* window = glfwCreateWindow(WINDOW_WIDTH/2, WINDOW_HEIGHT/2, "107062120 HW3", NULL, NULL);
     if (window == NULL)
     {
         std::cout << "Failed to create GLFW window" << std::endl;
